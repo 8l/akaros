@@ -630,7 +630,38 @@ void sysenter_callwrapper(struct syscall *sysc, unsigned long count,
                           struct sw_trapframe *sw_tf)
 {
 	struct per_cpu_info *pcpui = &per_cpu_info[core_id()];
+
+	if ((long)sysc & 0x4000000000000000)
+		return;
+
+	// XXX this costs 35 nsec.  
+	// we clearly need to do the ctx finalization before yanking the ctx
+	// maybe we could hold off on copying into pcpui til later
+	// 		- this is about getting off the stack in case we block a kthread
+	// 		if we held off on this, we'd need to do it before the kth goes away
+	//
+	// 		pcpui wants a pointer to a ctx, not a sw tf.  at this point, we're
+	// 		copying a tf into a ctx.
+	// 	this is somewhat independent from when the context is finalized.  this
+	// 	is more about *where* the context is
+	//
+	// 	for the finalize_ctx, grep cur_ctx current_ctx and actual_ctx
+	//		helper functions for copying contexts that does the finalize?
+	//			assumption is that some state might still be in HW
+	//			what would they do?  be told where to copy pcpui->cur_ctx?
+	//		copy_current_ctx_to(struct user_context *loc)
+	//			save_?
+	//			where?  trap?  (probably)
+	//
+	//	WAIT: we also might need to finalize when we abandon
+	//		XXX
+	//			either that or change the rules about finalize
+	//
 	set_current_ctx_sw(pcpui, sw_tf);
+
+	if ((long)sysc & 0x2000000000000000)
+		proc_restartcore();
+
 	__set_cpu_state(pcpui, CPU_STATE_KERNEL);
 	/* Once we've set_current_ctx, we can enable interrupts.  This used to be
 	 * mandatory (we had immediate KMSGs that would muck with cur_ctx).  Now it

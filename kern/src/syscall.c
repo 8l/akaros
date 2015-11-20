@@ -2473,6 +2473,13 @@ void run_local_syscall(struct syscall *sysc)
 {
 	struct per_cpu_info *pcpui = &per_cpu_info[core_id()];
 
+
+	bool notrace   = (long)sysc & 0x1000000000000000;
+	bool nofinish  = (long)sysc & 0x0800000000000000;
+	bool nosyscall = (long)sysc & 0x0400000000000000;
+
+	sysc = (struct syscall*)((long)sysc & (ULIM - 1));
+
 	assert(irq_is_enabled());	/* in case we proc destroy */
 	/* In lieu of pinning, we just check the sysc and will PF on the user addr
 	 * later (if the addr was unmapped).  Which is the plan for all UMEM. */
@@ -2482,21 +2489,28 @@ void run_local_syscall(struct syscall *sysc)
 		return;
 	}
 	pcpui->cur_kthread->sysc = sysc;	/* let the core know which sysc it is */
-	systrace_start_trace(pcpui->cur_kthread, sysc);
-	alloc_sysc_str(pcpui->cur_kthread);
+	if (!notrace) {
+		systrace_start_trace(pcpui->cur_kthread, sysc);
+		alloc_sysc_str(pcpui->cur_kthread);
+	}
 	/* syscall() does not return for exec and yield, so put any cleanup in there
 	 * too. */
-	sysc->retval = syscall(pcpui->cur_proc, sysc->num, sysc->arg0, sysc->arg1,
-	                       sysc->arg2, sysc->arg3, sysc->arg4, sysc->arg5);
+	if (!nosyscall)
+		sysc->retval = syscall(pcpui->cur_proc, sysc->num, sysc->arg0,
+		                       sysc->arg1, sysc->arg2, sysc->arg3,
+							   sysc->arg4, sysc->arg5);
 	/* Need to re-load pcpui, in case we migrated */
 	pcpui = &per_cpu_info[core_id()];
-	free_sysc_str(pcpui->cur_kthread);
-	systrace_finish_trace(pcpui->cur_kthread, sysc->retval);
+	if (!notrace) {
+		free_sysc_str(pcpui->cur_kthread);
+		systrace_finish_trace(pcpui->cur_kthread, sysc->retval);
+	}
 	/* Some 9ns paths set errstr, but not errno.  glibc will ignore errstr.
 	 * this is somewhat hacky, since errno might get set unnecessarily */
 	if ((current_errstr()[0] != 0) && (!sysc->err))
 		sysc->err = EUNSPECIFIED;
-	finish_sysc(sysc, pcpui->cur_proc);
+	if (!nofinish)
+		finish_sysc(sysc, pcpui->cur_proc);
 	pcpui->cur_kthread->sysc = NULL;	/* No longer working on sysc */
 }
 

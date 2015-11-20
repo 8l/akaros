@@ -489,6 +489,12 @@ irq_all_tf:
 .type sysenter_handler, @function;
 
 sysenter_handler:
+#SPEED_FASTCALL
+	movabs $0xf0f0000000000002, %rax
+	cmp %rax, %rdi
+	jne 1f
+	rex.w sysret
+1:
 #ifndef CONFIG_NOFASTCALL_FSBASE
 	# Do a quick TLS / FS base change, never changing stacks.
 	# When rdi has the magic number, rsi has the new base
@@ -530,6 +536,15 @@ normal_syscall:
 	pushq %r12
 	pushq %rbp
 	pushq %rbx
+
+# SPEED_NOTLS (Top bit says "no tls")
+	movabs $0x8000000000000000, %rax
+	test %rax, %rdi
+	je save_tls
+	pushq $0 # fsbase space
+	pushq $0 # gsbase space
+	jmp past_tls
+save_tls:
 	# save fs and gs base
 	movl $MSR_FS_BASE, %ecx
 	rdmsr
@@ -547,10 +562,46 @@ normal_syscall:
 	rdmsr
 	movl $MSR_KERN_GS_BASE, %ecx
 	wrmsr
+past_tls:
 	movq $0, %rbp			# so we can backtrace to this point
 	movq %rsp, %rdx
 	# arg0, rdi: struct sysc*.  arg1, rsi: count.  arg2, rdx: sw_tf
 	call sysenter_callwrapper
 	# return via pop_tf, never this path
-sysenter_spin:
-	jmp sysenter_spin
+#sysenter_spin:
+#	jmp sysenter_spin
+
+#	# this is how to return directly (as of 2014-10-14, might not work)
+#	popq %rax 				# pop gsbase
+#	movq %rax, %rdx
+#	shr $32, %rdx
+#	movl $MSR_GS_BASE, %ecx
+#	wrmsr 					# write gsbase
+#	popq %rax 				# pop fsbase
+#	movq %rax, %rdx
+#	shr $32, %rdx
+#	movl $MSR_FS_BASE, %ecx
+#	wrmsr 					# write fsbase
+
+	# hacked for the NOTLS_AND_RETURN
+	popq %rax # pop fsbase
+	popq %rax # pop gsbase
+	swapgs
+
+	movq $0, %rax 			# 0 all unused registers, don't leak kernel state
+	movq $0, %rdx
+	movq $0, %rsi
+	movq $0, %rdi
+	movq $0, %r8
+	movq $0, %r9
+	movq $0, %r10
+	popq %rbx
+	popq %rbp
+	popq %r12
+	popq %r13
+	popq %r14
+	popq %r15
+	movq $FL_IF, %r11
+	popq %rcx
+	popq %rsp
+	rex.w sysret

@@ -15,8 +15,13 @@ void proc_pop_ctx(struct user_context *ctx)
 	 * gs bases */
 	if (ctx->type == ROS_HW_CTX) {
 		struct hw_trapframe *tf = &ctx->tf.hw_tf;
-		write_msr(MSR_GS_BASE, (uint64_t)tf->tf_gsbase);
-		write_msr(MSR_FS_BASE, (uint64_t)tf->tf_fsbase);
+
+		if (x86_hwtf_is_partial(tf)) {
+			swap_gs();
+		} else {
+			write_msr(MSR_GS_BASE, (uint64_t)tf->tf_gsbase);
+			write_msr(MSR_FS_BASE, (uint64_t)tf->tf_fsbase);
+		}
 		asm volatile ("movq %0, %%rsp;          "
 		              "popq %%rax;              "
 		              "popq %%rbx;              "
@@ -39,8 +44,20 @@ void proc_pop_ctx(struct user_context *ctx)
 		panic("iretq failed");
 	} else {
 		struct sw_trapframe *tf = &ctx->tf.sw_tf;
-		write_msr(MSR_GS_BASE, (uint64_t)tf->tf_gsbase);
-		write_msr(MSR_FS_BASE, (uint64_t)tf->tf_fsbase);
+
+		if (x86_swtf_is_partial(tf)) {
+			swap_gs();
+		} else {
+			// real version
+			//write_msr(MSR_GS_BASE, (uint64_t)tf->tf_gsbase);
+			//write_msr(MSR_FS_BASE, (uint64_t)tf->tf_fsbase);
+
+			// XXX speed hacks
+			if (tf->tf_gsbase)
+				write_msr(MSR_GS_BASE, (uint64_t)tf->tf_gsbase);
+			if (tf->tf_fsbase)
+				write_msr(MSR_FS_BASE, (uint64_t)tf->tf_fsbase);
+		}
 		/* We need to 0 out any registers that aren't part of the sw_tf and that
 		 * we won't use/clobber on the out-path.  While these aren't part of the
 		 * sw_tf, we also don't want to leak any kernel register content. */

@@ -1898,6 +1898,7 @@ static void __set_curctx_to_vcoreid(struct proc *p, uint32_t vcoreid,
 	 * it is the old, interrupted vcore context. */
 	if (vcpd->notif_disabled) {
 		/* copy-in the tf we'll pop, then set all security-related fields */
+		// XXX XME (not really, this isn't current ctx)
 		pcpui->actual_ctx = vcpd->vcore_ctx;
 		proc_secure_ctx(&pcpui->actual_ctx);
 	} else { /* not restarting from a preemption, use a fresh vcore */
